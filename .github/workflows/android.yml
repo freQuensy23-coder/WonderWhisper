@@ -16,6 +16,8 @@ jobs:
   build:
     name: Build APK
     runs-on: ubuntu-latest
+    env:
+      HAS_ANDROID_SIGNING_KEY: ${{ secrets.ANDROID_KEYSTORE_BASE64 != '' }}
 
     steps:
       - name: Checkout
@@ -43,6 +45,32 @@ jobs:
 
       - name: Build APKs
         run: ./gradlew assembleDebug assembleRelease
+
+      - name: Sign release APK
+        if: ${{ env.HAS_ANDROID_SIGNING_KEY == 'true' }}
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          test -n "$ANDROID_KEY_ALIAS"
+          test -n "$ANDROID_KEYSTORE_PASSWORD"
+          test -n "$ANDROID_KEY_PASSWORD"
+          printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 --decode > release-keystore.jks
+          unsigned_apk="$(find app/build/outputs/apk/release -type f -name '*-release-unsigned.apk' | head -n 1)"
+          test -n "$unsigned_apk"
+          signed_apk="${unsigned_apk%-unsigned.apk}-signed.apk"
+          apksigner sign \
+            --ks release-keystore.jks \
+            --ks-key-alias "$ANDROID_KEY_ALIAS" \
+            --ks-pass "pass:$ANDROID_KEYSTORE_PASSWORD" \
+            --key-pass "pass:$ANDROID_KEY_PASSWORD" \
+            --out "$signed_apk" \
+            "$unsigned_apk"
+          apksigner verify --verbose "$signed_apk"
+          rm -f release-keystore.jks
 
       - name: Collect APKs
         run: |
